@@ -215,7 +215,8 @@ pub struct TransformerEncoderLayer<B: Backend> {
 }
 
 impl<B: Backend> TransformerEncoderLayer<B> {
-    fn new(config: &TransformerEncoderConfig, device: &B::Device) -> Self {
+    /// Initialize a new [transformer encoder layer](TransformerEncoderLayer) module.
+    pub fn new(config: &TransformerEncoderConfig, device: &B::Device) -> Self {
         let mha = MultiHeadAttentionConfig::new(config.d_model, config.n_heads)
             .with_initializer(config.initializer.clone())
             .with_dropout(config.dropout)
@@ -239,7 +240,13 @@ impl<B: Backend> TransformerEncoderLayer<B> {
         }
     }
 
-    fn forward(
+    /// Applies the forward pass on the input tensor.
+    ///
+    /// # Shapes
+    ///
+    /// - tensor: `[batch_size, seq_length, d_model]`
+    /// - output: `[batch_size, seq_length, d_model]`
+    pub fn forward(
         &self,
         input: Tensor<B, 3>,
         mask_pad: Option<Tensor<B, 2, Bool>>,
