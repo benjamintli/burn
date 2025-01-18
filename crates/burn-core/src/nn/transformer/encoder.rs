@@ -46,6 +46,9 @@ pub struct TransformerEncoderConfig {
         default = "Initializer::KaimingUniform{gain:1.0/num_traits::Float::sqrt(3.0), fan_out_only:false}"
     )]
     pub initializer: Initializer,
+    /// if set to true, the TransformerEncoder will share the same encoder layer across all layers of the model (e.g. ALBERT)
+    #[config(default = false)]
+    pub use_cross_layer_parameter_sharing: bool,
 }
 
 /// The transformer encoder module as describe in the paper [Attention Is All You Need](https://arxiv.org/abs/1706.03762).
@@ -81,6 +84,9 @@ pub struct TransformerEncoder<B: Backend> {
 
     /// Use "quiet softmax" instead of regular softmax.
     pub quiet_softmax: bool,
+
+    /// Use the same weights across all layers of the transformer
+    pub use_cross_layer_parameter_sharing: bool,
 }
 
 impl<B: Backend> ModuleDisplay for TransformerEncoder<B> {
@@ -99,6 +105,10 @@ impl<B: Backend> ModuleDisplay for TransformerEncoder<B> {
             .add("dropout", &self.dropout)
             .add("norm_first", &self.norm_first)
             .add("quiet_softmax", &self.quiet_softmax)
+            .add(
+                "use_cross_layer_parameter_sharing",
+                &self.use_cross_layer_parameter_sharing,
+            )
             .optional()
     }
 }
@@ -136,9 +146,14 @@ impl<B: Backend> TransformerEncoderInput<B> {
 impl TransformerEncoderConfig {
     /// Initialize a new [transformer encoder](TransformerEncoder) module.
     pub fn init<B: Backend>(&self, device: &B::Device) -> TransformerEncoder<B> {
-        let layers = (0..self.n_layers)
-            .map(|_| TransformerEncoderLayer::new(self, device))
-            .collect::<Vec<_>>();
+        let layers = if self.use_cross_layer_parameter_sharing {
+            let shared_layer = TransformerEncoderLayer::new(self, device);
+            vec![shared_layer]
+        } else {
+            (0..self.n_layers)
+                .map(|_| TransformerEncoderLayer::new(self, device))
+                .collect::<Vec<_>>()
+        };
 
         TransformerEncoder {
             layers,
@@ -149,6 +164,7 @@ impl TransformerEncoderConfig {
             dropout: self.dropout,
             norm_first: self.norm_first,
             quiet_softmax: self.quiet_softmax,
+            use_cross_layer_parameter_sharing: self.use_cross_layer_parameter_sharing,
         }
     }
 }
@@ -162,9 +178,14 @@ impl<B: Backend> TransformerEncoder<B> {
     /// - output: `[batch_size, seq_length, d_model]`
     pub fn forward(&self, input: TransformerEncoderInput<B>) -> Tensor<B, 3> {
         let mut x = input.tensor;
-
-        for layer in self.layers.iter() {
-            x = layer.forward(x, input.mask_pad.clone(), input.mask_attn.clone());
+        if self.use_cross_layer_parameter_sharing {
+            for _ in 0..self.layers.len() {
+                x = self.layers[0].forward(x, input.mask_pad.clone(), input.mask_attn.clone());
+            }
+        } else {
+            for layer in self.layers.iter() {
+                x = layer.forward(x, input.mask_pad.clone(), input.mask_attn.clone());
+            }
         }
 
         x
@@ -418,6 +439,16 @@ mod tests {
         )
     }
 
+    #[test]
+    fn test_autoregressive_cross_layer_sharing() {
+        let [d_model, d_ff, n_heads, num_layers] = [12, 24, 2, 3];
+        test_autoregressive(
+            TransformerEncoderConfig::new(d_model, d_ff, n_heads, num_layers)
+                .with_norm_first(false)
+                .with_use_cross_layer_parameter_sharing(true),
+        )
+    }
+
     fn test_autoregressive(config: TransformerEncoderConfig) {
         let [batch_size, seq_length, d_model] = [3, 4, config.d_model];
         let device = Default::default();
@@ -459,7 +490,8 @@ mod tests {
         assert_eq!(
             alloc::format!("{}", transformer),
             "TransformerEncoder {d_model: 2, d_ff: 4, n_heads: 2, \
-            n_layers: 3, dropout: 0.1, norm_first: false, quiet_softmax: false, params: 162}"
+            n_layers: 3, dropout: 0.1, norm_first: false, quiet_softmax: false, \
+            use_cross_layer_parameter_sharing: false, params: 162}"
         );
     }
 }
