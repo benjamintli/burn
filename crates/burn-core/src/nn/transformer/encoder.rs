@@ -47,8 +47,7 @@ pub struct TransformerEncoderConfig {
     )]
     pub initializer: Initializer,
     /// if set to true, the TransformerEncoder will share the same encoder layer across all layers of the model (e.g. ALBERT)
-    #[config(default = false)]
-    pub use_cross_layer_parameter_sharing: bool,
+    pub use_cross_layer_parameter_sharing: Option<bool>,
 }
 
 /// The transformer encoder module as describe in the paper [Attention Is All You Need](https://arxiv.org/abs/1706.03762).
@@ -146,13 +145,14 @@ impl<B: Backend> TransformerEncoderInput<B> {
 impl TransformerEncoderConfig {
     /// Initialize a new [transformer encoder](TransformerEncoder) module.
     pub fn init<B: Backend>(&self, device: &B::Device) -> TransformerEncoder<B> {
-        let layers = if self.use_cross_layer_parameter_sharing {
-            let shared_layer = TransformerEncoderLayer::new(self, device);
-            vec![shared_layer]
-        } else {
-            (0..self.n_layers)
+        let layers = match self.use_cross_layer_parameter_sharing {
+            Some(true) => {
+                let shared_layer = TransformerEncoderLayer::new(self, device);
+                vec![shared_layer]
+            }
+            Some(false) | None => (0..self.n_layers)
                 .map(|_| TransformerEncoderLayer::new(self, device))
-                .collect::<Vec<_>>()
+                .collect::<Vec<_>>(),
         };
 
         TransformerEncoder {
@@ -164,7 +164,9 @@ impl TransformerEncoderConfig {
             dropout: self.dropout,
             norm_first: self.norm_first,
             quiet_softmax: self.quiet_softmax,
-            use_cross_layer_parameter_sharing: self.use_cross_layer_parameter_sharing,
+            use_cross_layer_parameter_sharing: self
+                .use_cross_layer_parameter_sharing
+                .unwrap_or(false),
         }
     }
 }
@@ -445,7 +447,7 @@ mod tests {
         test_autoregressive(
             TransformerEncoderConfig::new(d_model, d_ff, n_heads, num_layers)
                 .with_norm_first(false)
-                .with_use_cross_layer_parameter_sharing(true),
+                .with_use_cross_layer_parameter_sharing(Some(true)),
         )
     }
 
